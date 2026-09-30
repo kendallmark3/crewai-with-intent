@@ -1,79 +1,186 @@
-# Intent-Driven Engineering Starter
+# CrewAI + Claude Code Starter
 
-**This is the canonical starting point for Intent-Driven Engineering.**
+A small, complete example of a CrewAI project designed to be opened in Claude Code and extended from an intent file.
 
-Most AI coding workflows start with a prompt and hope the model infers what you meant. Intent-Driven Engineering flips that: you write the *intent* down first — the business outcome, the constraints, the acceptance criteria — and every agent, hook, and check in this repo is built to read that intent before it touches code. Nothing gets planned, implemented, or reviewed without first being traced back to a stated intent.
+Built on [intent-drive-starter](https://github.com/kendallmark3/intent-drive-starter): the `agents/`, `hooks/`, `context/`, `templates/`, `skills/`, and `docs/` folders come from that base. Learn the methodology at [learnteachmaster.org](https://learnteachmaster.org).
 
-Learn the methodology in depth at **[learnteachmaster.org](https://learnteachmaster.org)** and **[intent-driven-engineering.com](https://intent-driven-engineering.com)**.
+## What it demonstrates
 
-## The core loop
+This repo creates a four-agent engineering crew:
 
-1. **State the intent.** Every feature starts in [`intent/current-feature.md`](intent/current-feature.md) — business outcome, requirements, constraints, acceptance criteria. The project-level version lives in [`intent/project-intent.md`](intent/project-intent.md).
-2. **Plan against it.** The [Planner agent](agents/planner.md) and the [feature-planner skill](skills/feature-planner.md) break the stated intent into implementation steps — nothing gets planned that isn't traceable to the intent doc.
-3. **Validate before coding.** The [`pre-implement`](hooks/pre-implement.md) hook checks that intent is actually validated before the [Developer agent](agents/developer.md) writes a line of code.
-4. **Implement against shared context.** The developer works against the living reference docs in [`context/`](context/) — architecture, business rules, glossary, integrations, security — so implementation never drifts from how the system actually works.
-5. **Verify.** The [QA agent](agents/qa.md) and the [`post-implement`](hooks/post-implement.md) hook run tests and update docs before anything is considered done.
-6. **Review against intent, not just diff.** The [Reviewer agent](agents/reviewer.md) and the [`pre-pr`](hooks/pre-pr.md) hook verify the change actually satisfies the original acceptance criteria before a PR goes out.
-7. **Ship.** CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) is the last gate.
+1. Requirements Analyst
+2. Solution Architect
+3. Developer
+4. Intent Reviewer
 
-[Templates](templates/) (feature, bug, ADR) exist so intent, defects, and architecture decisions are always captured in the same shape.
+The crew receives a single product intent and produces a structured implementation proposal in `output/final_report.md`.
+
+The point is not the demo itself. The point is the pattern:
+
+**Human declares intent → agents reason and collaborate → system produces an inspectable artifact.**
+
+## Project structure
+
+```text
+crewai-claude-starter/
+├── README.md
+├── requirements.txt          # pinned, tested versions
+├── .env.example
+├── .gitignore                # keeps .env and generated output out of git
+├── .claude/CLAUDE.md         # repo rules for Claude Code
+├── .github/workflows/ci.yml  # runs pytest on every push/PR
+├── intent/
+│   ├── project-intent.md
+│   └── current-feature.md    # source of truth for the crew
+├── src/
+│   ├── main.py               # the CrewAI crew (agents reason)
+│   └── verify.py             # deterministic gate (systems verify)
+├── tests/                    # offline tests, no API key needed
+├── output/                   # final_report.md lands here
+└── agents/ hooks/ context/ templates/ skills/ docs/   # from intent-drive-starter
+```
+
+## Prerequisites
+
+- Python 3.11+
+- An Anthropic API key
+- Claude Code installed if you want Claude Code to inspect or modify the repo
+
+## Setup
+
+### 1. Create a virtual environment
+
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+macOS/Linux:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+### 2. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Configure the model
+
+Copy `.env.example` to `.env` and add your Anthropic API key.
+
+```text
+ANTHROPIC_API_KEY=your_key_here
+MODEL=anthropic/claude-sonnet-5-5
+```
+
+CrewAI 1.x calls Anthropic natively (no LiteLLM). To use a different Claude model, change `MODEL` in `.env`.
+
+### 4. Run it
+
+```bash
+python -m src.main
+```
+
+The final result is written to `output/final_report.md`, then checked automatically by `src/verify.py`. The run exits with code 1 if the report is missing a required section, has an empty section, or lacks a `Verdict: PASS | PARTIAL | FAIL` line.
+
+Re-check an existing report any time:
+
+```bash
+python -m src.verify output/final_report.md
+```
+
+### 5. Run the tests
+
+```bash
+pytest -q
+```
+
+The tests run offline. They check the crew's shape (four agents, sequential order, context chaining) and the verifier's pass/fail behavior. CI runs the same command.
+
+## Using this with Claude Code
+
+Open the repository in Claude Code and give it this instruction:
+
+```text
+Read README.md and intent/current-feature.md first.
+Treat the intent file as the source of truth.
+Inspect the existing CrewAI implementation before changing anything.
+Make the smallest changes needed to satisfy the intent.
+Preserve the Human -> Agent -> System separation.
+Run the application and report what changed, what ran, and any unresolved issues.
+```
+
+Claude Code can then modify the crew, add tools, replace the example intent, add deterministic validation, or package the workflow for a larger platform such as Amazon Bedrock AgentCore.
 
 ## Architecture
 
-![Intent-Driven Engineering architecture diagram](docs/images/architecture.png)
-
-[View the interactive version](docs/architecture.html) (open locally, or enable GitHub Pages on this repo to serve it live).
-
-Every arrow into the loop originates from a stated intent, and every exit from the loop (QA, review, CI) checks back against that same intent — not just against the diff.
-
-<details>
-<summary>Mermaid source (renders inline on GitHub)</summary>
-
-```mermaid
-flowchart TD
-    PI["intent/project-intent.md<br/>Purpose · Business Outcomes · Constraints"]
-    CF["intent/current-feature.md<br/>Outcome · Requirements · Constraints · Acceptance Criteria"]
-
-    PI --> CF
-
-    subgraph Loop["Intent-Driven Loop"]
-        direction TB
-        PLAN["Planner Agent<br/>+ Feature Planner Skill"]
-        PRE["pre-implement hook<br/>Validate intent before coding"]
-        DEV["Developer Agent"]
-        POST["post-implement hook<br/>Run tests · update docs"]
-        QA["QA Agent"]
-        PREPR["pre-pr hook<br/>Verify checks before PR"]
-        REV["Reviewer Agent"]
-
-        PLAN --> PRE --> DEV --> POST --> QA --> PREPR --> REV
-    end
-
-    CF --> PLAN
-    REV -->|"traces back to"| CF
-
-    CTX["context/<br/>architecture · business-rules<br/>glossary · integrations · security"]
-    TPL["templates/<br/>feature · bug · ADR"]
-
-    CTX -.->|reference| DEV
-    CTX -.->|reference| QA
-    CTX -.->|reference| REV
-    TPL -.->|shape| CF
-
-    REV --> CI["CI Pipeline<br/>.github/workflows/ci.yml"]
-    CI --> SHIP(["Shipped"])
+```text
+                  HUMAN
+                    |
+                    v
+        intent/current-feature.md
+                    |
+                    v
+              CrewAI Crew
+        +-----------------------+
+        | Requirements Analyst  |
+        | Solution Architect    |
+        | Developer             |
+        | Reviewer              |
+        +-----------------------+
+                    |
+                    v
+          output/final_report.md
+                    |
+                    v
+                 SYSTEM
+     src/verify.py  (deterministic gate)
+     tests/ + CI    (offline checks)
 ```
 
-</details>
+## Why this is intentionally simple
 
-## Getting started
+CrewAI can support tools, memory, flows, structured outputs, human approvals, callbacks, and more. This starter avoids all of that initially so the orchestration model stays visible. The only system-side logic is a small deterministic verifier.
 
-1. Fill out [`intent/project-intent.md`](intent/project-intent.md) with your project's purpose, business outcomes, and constraints.
-2. For each new feature, fill out [`intent/current-feature.md`](intent/current-feature.md) before writing any code.
-3. Let the agents in [`agents/`](agents/) and the hooks in [`hooks/`](hooks/) carry the feature through planning, implementation, QA, and review.
-4. Keep [`context/`](context/) current — it's the shared source of truth every agent reads from.
+Once this runs, the natural next additions are:
 
-## Learn more
+- MCP or API tools
+- repository inspection tools
+- deterministic test execution
+- structured Pydantic outputs
+- human approval gates
+- AgentCore runtime deployment
+- observability and evidence capture
 
-- **[learnteachmaster.org](https://learnteachmaster.org)** — canonical home for Learn/Teach/Master and where Intent-Driven Engineering is taught in depth.
-- **[intent-driven-engineering.com](https://intent-driven-engineering.com)** — the methodology itself, in detail.
+## Expected behavior
+
+The Requirements Analyst translates the intent into concrete requirements.
+
+The Solution Architect creates an implementation design.
+
+The Developer turns the design into an implementation plan and sample code approach.
+
+The Intent Reviewer checks everything against the original intent and produces the final report.
+
+The agents execute sequentially so the reasoning chain is easy to understand.
+
+## Intent-Driven Engineering interpretation
+
+The intent file owns the desired outcome and boundaries.
+
+CrewAI owns agent reasoning and collaboration.
+
+Deterministic systems own verification. Today that means `src/verify.py` and the test suite; the Reviewer agent's verdict is an input, not the gate.
+
+That produces the pattern:
+
+```text
+Human declares -> Agents reason -> Systems verify
+```
+

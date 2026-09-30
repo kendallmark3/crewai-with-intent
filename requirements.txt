@@ -1,0 +1,4 @@
+# Tested together on 2026-09-30 (Python 3.12). Bump deliberately, then re-run tests.
+crewai[anthropic]==1.15.23
+python-dotenv==1.2.3
+pytest==9.1.1

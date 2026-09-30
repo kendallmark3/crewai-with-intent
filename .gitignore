@@ -1,1 +1,15 @@
+# Secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated artifacts (keep the folder)
+output/*
+!output/.gitkeep
+
+# OS
 .DS_Store
