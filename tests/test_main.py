@@ -21,6 +21,7 @@ def test_crew_shape(monkeypatch):
     assert roles == ["Requirements Analyst", "Solution Architect", "Developer", "Intent Reviewer"]
     assert crew.process == Process.sequential
     assert all(a.allow_delegation is False for a in crew.agents)
+    assert all(a.llm.temperature is None for a in crew.agents)
 
     analyze, arch, impl, review = crew.tasks
     assert arch.context == [analyze]

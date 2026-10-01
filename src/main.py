@@ -30,7 +30,8 @@ def clean_output(text: str) -> str:
 
 def build_crew(intent_text: str) -> Crew:
     model_name = os.getenv("MODEL", DEFAULT_MODEL)
-    llm = LLM(model=model_name, temperature=0.2)
+    # No temperature: current Claude models reject it with a 400.
+    llm = LLM(model=model_name)
 
     requirements_analyst = Agent(
         role="Requirements Analyst",
