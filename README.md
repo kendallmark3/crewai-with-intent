@@ -34,7 +34,9 @@ crewai-claude-starter/
 │   └── current-feature.md    # source of truth for the crew
 ├── src/
 │   ├── main.py               # the CrewAI crew (agents reason)
-│   └── verify.py             # deterministic gate (systems verify)
+│   ├── verify.py             # deterministic gate (systems verify)
+│   └── server.py             # local API for the web UI (stdlib only)
+├── web/                      # React UI: paste an intent, press Connect
 ├── tests/                    # offline tests, no API key needed
 ├── output/                   # final_report.md lands here
 └── agents/ hooks/ context/ templates/ skills/ docs/   # from intent-drive-starter
@@ -95,7 +97,20 @@ Re-check an existing report any time:
 python -m src.verify output/final_report.md
 ```
 
-### 5. Run the tests
+### 5. Use the web UI (optional)
+
+A small React page lets you paste any story or feature as Markdown instead of editing `intent/current-feature.md`. It opens pre-filled with that file, so pressing **Connect** without changes runs the repo's own intent.
+
+```bash
+cd web && npm install && npm run build && cd ..
+python -m src.server          # http://127.0.0.1:8787 (set CREW_PORT to change it)
+```
+
+For frontend work, run `python -m src.server` and `npm run dev` (in `web/`) side by side; Vite proxies `/api` to the Python server.
+
+The server runs the same crew and the same `verify.py` gate as the CLI, writes the same `output/final_report.md`, and shows the report and the verification result on the page. It only listens on localhost and allows one run at a time, because every run spends API credits. Pasted text is used for that run only.
+
+### 6. Run the tests
 
 ```bash
 pytest -q
@@ -160,13 +175,19 @@ Once this runs, the natural next additions are:
 
 ## Expected behavior
 
-The Requirements Analyst translates the intent into concrete requirements.
+Every agent works under one rule: **choose the simplest implementation that satisfies the intent. When an assumption is necessary, make it visible and reversible. Do not turn an assumption into architecture unless the intent or repository evidence requires it.** The intent says what must be true; the crew must not add to it.
 
-The Solution Architect creates an implementation design.
+Assumptions are numbered A1, A2, ... and each one says what changes if it turns out wrong.
 
-The Developer turns the design into an implementation plan and sample code approach.
+The Requirements Analyst lists only the requirements the intent makes, numbered R1, R2, ... and traced to the intent text.
 
-The Intent Reviewer checks everything against the original intent and produces the final report.
+The Solution Architect determines the simplest architecture that meets them. Every component names the requirement it serves; anything that can't is left out.
+
+The Developer plans only what is necessary to build that architecture. Ideas no requirement needs go under "Beyond the intent (needs human approval)" and are not planned.
+
+The Intent Reviewer checks the proposal for gaps, for over-building, and for assumptions that were turned into architecture, and produces the final report. An over-built proposal cannot get a PASS.
+
+Each step has a word budget, so outputs stay short and runs stay fast.
 
 The agents execute sequentially so the reasoning chain is easy to understand.
 

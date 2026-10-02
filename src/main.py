@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 import os
 import re
@@ -13,6 +14,16 @@ ROOT = Path(__file__).resolve().parents[1]
 INTENT_PATH = ROOT / "intent" / "current-feature.md"
 OUTPUT_PATH = ROOT / "output" / "final_report.md"
 DEFAULT_MODEL = "anthropic/claude-sonnet-5-5"
+
+# Every task starts with this rule. The intent says what must be true; the crew does no more than that,
+# and an assumption stays a labelled, reversible note instead of quietly becoming architecture.
+SCOPE_RULE = (
+    "RULE: Choose the simplest implementation that satisfies the intent. "
+    "When an assumption is necessary, make it visible and reversible. "
+    "Do not turn an assumption into architecture unless the intent or repository evidence requires it."
+)
+# Shorter outputs keep runs fast: each task reads every earlier task's output.
+WORD_BUDGETS = {"analysis": 300, "architecture": 350, "implementation": 450, "report": 1200}
 
 
 def read_intent() -> str:
@@ -33,12 +44,17 @@ def build_crew(intent_text: str) -> Crew:
     # No temperature: current Claude models reject it with a 400.
     llm = LLM(model=model_name)
 
+    # Agent-role over-writing: earlier prompts asked each role for a full menu (tech choices,
+    # failure modes, future verification points) and the agents produced an enterprise
+    # blueprint every time, which also made runs slow. Each role now does only what the
+    # intent needs, and every proposal must trace back to a numbered requirement.
     requirements_analyst = Agent(
         role="Requirements Analyst",
-        goal="Translate the human-authored intent into precise, testable engineering requirements.",
+        goal="State only the requirements the intent actually makes, each one testable and traceable to the intent text.",
         backstory=(
-            "You are a senior business and systems analyst. You preserve the user's intent, "
-            "surface ambiguity, and avoid inventing unnecessary scope."
+            "You are a senior analyst. You preserve the user's intent exactly. You never add a "
+            "requirement the intent does not state or clearly imply, and you name ambiguity instead "
+            "of resolving it with your own preferences."
         ),
         llm=llm,
         verbose=True,
@@ -47,10 +63,13 @@ def build_crew(intent_text: str) -> Crew:
 
     solution_architect = Agent(
         role="Solution Architect",
-        goal="Create the simplest architecture that satisfies the interpreted requirements and boundaries.",
+        goal=(
+            "Determine the simplest architecture that satisfies the intent and the context it provides. "
+            "Do not introduce components, abstractions, or infrastructure unless they solve a stated requirement."
+        ),
         backstory=(
-            "You are a pragmatic software architect. You optimize for clarity, maintainability, "
-            "and explicit tradeoffs rather than unnecessary complexity."
+            "You are a pragmatic architect who is judged by what you leave out. A component that no "
+            "requirement needs is a defect in your design, not extra value."
         ),
         llm=llm,
         verbose=True,
@@ -59,10 +78,13 @@ def build_crew(intent_text: str) -> Crew:
 
     developer = Agent(
         role="Developer",
-        goal="Turn the architecture into a concrete implementation approach a developer could execute.",
+        goal=(
+            "Plan only what is necessary to implement the chosen architecture. Prefer the conventions and "
+            "existing capabilities the intent names. Do not create scaffolding solely because it is a general best practice."
+        ),
         backstory=(
-            "You are a senior developer. You convert architecture into practical file structures, "
-            "interfaces, implementation steps, and tests."
+            "You are a senior developer who ships the smallest working thing. You cannot see a repository, "
+            "so you do not invent one; you plan the fewest files and steps that meet the requirements."
         ),
         llm=llm,
         verbose=True,
@@ -71,10 +93,10 @@ def build_crew(intent_text: str) -> Crew:
 
     reviewer = Agent(
         role="Intent Reviewer",
-        goal="Review the proposed solution against the original intent and identify gaps before approval.",
+        goal="Check the proposal against the original intent for both gaps and over-building.",
         backstory=(
-            "You are an independent engineering reviewer. You compare outputs directly against "
-            "the source intent, boundaries, outputs, and success criteria."
+            "You are an independent reviewer. Missing something the intent asks for is a failure, and so "
+            "is adding something it does not ask for. You report both plainly."
         ),
         llm=llm,
         verbose=True,
@@ -83,62 +105,72 @@ def build_crew(intent_text: str) -> Crew:
 
     analyze_task = Task(
         description=f"""
-Read the following intent and convert it into a concise set of engineering requirements.
+{SCOPE_RULE}
 
-Do not expand the scope beyond what the intent asks for.
-Call out assumptions separately.
+Read the intent below and list the engineering requirements it actually makes.
+
+- Number each requirement R1, R2, ... and quote or cite the intent line it comes from.
+- Do not add requirements the intent does not state or clearly imply. No "nice to have" items.
+- List assumptions separately, numbered A1, A2, ... Make an assumption only where the intent leaves a gap you must fill.
+  For each one, say what would change if it turned out wrong, so it can be reversed.
+- List open questions separately. Do not resolve them with your own preferences.
+- Turn the intent's success criteria into acceptance checks.
+- Stay under {WORD_BUDGETS["analysis"]} words.
 
 INTENT:
 {intent_text}
 """,
         expected_output=(
-            "A Markdown requirements analysis containing functional requirements, non-functional "
-            "requirements, constraints, assumptions, and explicit acceptance checks."
+            "A short Markdown list of numbered requirements (R1, R2, ...) each traced to the intent, "
+            "then numbered assumptions (A1, A2, ...) each with what changes if it is wrong, open questions, and acceptance checks."
         ),
         agent=requirements_analyst,
     )
 
     architecture_task = Task(
-        description="""
-Using the requirements analysis from the previous task, propose the simplest complete architecture.
+        description=f"""
+{SCOPE_RULE}
 
-Include:
-- components
-- responsibilities
-- data flow
-- API shape
-- suggested technology choices
-- tradeoffs
-- where deterministic verification should eventually be inserted
+Using only the numbered requirements from the previous task, determine the simplest architecture that satisfies them.
 
-Stay inside the original intent boundaries.
+- Do not introduce components, abstractions, or infrastructure unless they solve a stated requirement.
+- For every component, name the requirement(s) it serves (e.g. "serves R2"). If you cannot, leave it out.
+- Do not turn an assumption into architecture. A component that exists only because of an assumption (A1, A2, ...)
+  is left out unless the intent requires it; if a choice depends on an assumption, cite it ("depends on A1")
+  and keep it easy to change.
+- Describe the API shape only as far as the requirements need.
+- If you consider something and reject it as unnecessary, say so in one line. Do not design it.
+- Stay inside the intent's boundaries. Stay under {WORD_BUDGETS["architecture"]} words.
 """,
-        expected_output="A concise Markdown architecture proposal.",
+        expected_output="A short Markdown architecture in which every component cites the requirement it serves.",
         agent=solution_architect,
         context=[analyze_task],
     )
 
     implementation_task = Task(
-        description="""
-Using the requirements and architecture, create a practical implementation plan.
+        description=f"""
+{SCOPE_RULE}
 
-Include:
-- proposed project/file structure
-- important interfaces or example request/response shapes
-- step-by-step build sequence
-- testing approach
-- likely failure modes
+Plan only what is necessary to implement the chosen architecture.
 
-Do not build the application. Produce an implementation blueprint only.
+- Give the smallest file structure and the fewest steps that meet the requirements; each step cites the requirement it serves.
+- Prefer the conventions and existing capabilities the intent names. Do not create scaffolding solely because it is a general best practice.
+- Where a step depends on an assumption, cite it ("depends on A2") and keep that step reversible. Do not plan work that only an assumption justifies.
+- Testing: only the tests that prove the acceptance checks.
+- Anything you think is valuable but no requirement needs goes in one line under "Beyond the intent (needs human approval)". Do not plan it.
+- Do not build the application. Stay under {WORD_BUDGETS["implementation"]} words.
 """,
-        expected_output="A developer-ready Markdown implementation blueprint.",
+        expected_output="A short Markdown implementation plan in which every step cites the requirement it serves.",
         agent=developer,
         context=[analyze_task, architecture_task],
     )
 
     review_task = Task(
         description=f"""
-Review all prior work against the ORIGINAL intent below.
+{SCOPE_RULE}
+
+Review all prior work against the ORIGINAL intent below. Carry forward only what traces to a requirement;
+condense, do not expand. Keep the whole report under {WORD_BUDGETS["report"]} words.
 
 Produce the final report with these exact sections:
 
@@ -153,6 +185,10 @@ Produce the final report with these exact sections:
 
 In the Intent Compliance Review, explicitly state whether each major output and success criterion was addressed.
 If something is missing, say so rather than pretending it is complete.
+In Risks and Assumptions, list every assumption (A1, A2, ...) with what changes if it is wrong.
+Also include a scope check: list anything in the proposal that the intent did not ask for,
+and any assumption that was turned into architecture without the intent requiring it.
+A proposal that adds components, scaffolding, or infrastructure no requirement needs cannot be PASS.
 End the Intent Compliance Review with exactly one line in this form:
 **Verdict:** PASS | PARTIAL | FAIL
 Output raw Markdown only. Do not wrap the report in a code fence.
@@ -173,15 +209,32 @@ ORIGINAL INTENT:
     )
 
 
-def main() -> None:
-    load_dotenv(ROOT / ".env")
+@dataclass
+class RunResult:
+    report: str
+    errors: list[str]
+    verdict: str | None
 
+    @property
+    def passed(self) -> bool:
+        return not self.errors
+
+
+def require_api_key() -> None:
+    """Fail before any agent work starts, so a missing key never looks like a crew failure."""
+    load_dotenv(ROOT / ".env")
     if not os.getenv("ANTHROPIC_API_KEY"):
         raise RuntimeError(
             "ANTHROPIC_API_KEY is not set. Copy .env.example to .env and add your key."
         )
 
-    intent_text = read_intent()
+
+def run_crew(intent_text: str) -> RunResult:
+    """Run the crew on one intent, write the report, and verify it.
+
+    Shared by the CLI and the web server so both go through the same
+    deterministic gate; callers decide how to surface a failed check.
+    """
     crew = build_crew(intent_text)
     result = crew.kickoff()
 
@@ -189,11 +242,19 @@ def main() -> None:
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_text(report, encoding="utf-8")
 
+    # Systems verify: deterministic gate, independent of the Reviewer agent.
+    return RunResult(report=report, errors=verify_report(report), verdict=get_verdict(report))
+
+
+def main() -> None:
+    require_api_key()
+    outcome = run_crew(read_intent())
+    report = outcome.report
+
     print("\nCrew complete.")
     print(f"Final report written to: {OUTPUT_PATH}")
 
-    # Systems verify: deterministic gate, independent of the Reviewer agent.
-    errors = verify_report(report)
+    errors = outcome.errors
     if errors:
         print("VERIFICATION FAILED:")
         for e in errors:
